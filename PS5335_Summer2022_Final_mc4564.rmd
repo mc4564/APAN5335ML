@@ -1,0 +1,351 @@
+---
+title: "Final Project"
+author: "Shay Chen (mc4564)"
+date: "6/26/2022"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Part 1: Loading and Preparing MNIST
+
+```{r Load MNIST}
+library(keras)
+
+#Import mnist dataset
+mnist <- dataset_mnist()
+x_train <- mnist$train$x
+y_train <- mnist$train$y
+x_test <- mnist$test$x
+y_test <- mnist$test$y
+
+#check train
+str(x_train)
+dim(x_train)
+str(y_train)
+dim(y_train)
+
+#check test
+str(y_test)
+dim(y_test)
+```
+
+### Part 1.1: Preparing MNIST and the Collected Handwritten Digits for Training
+
+Load the class's Handwritten Digit Data Set:
+
+```{r Load Class Handwritten Digits}
+#read csv
+library(readr)
+hand_data<-read.csv("combined_digits_1.csv")
+#4252*785
+head(hand_data)
+```
+
+Process Handwritten Digits Into Matrix:
+
+```{r Process Handwritten Digits Into Matrix}
+#separate label cols
+hand_label<-hand_data[785]
+hand_label<-as.vector(t(hand_label))
+hand_label_a <- array(hand_label)
+
+#convert data into matrix
+hand_data_784=hand_data[1:784]
+hand_matrix=as.matrix(hand_data_784)
+hand_matrix<-unname(hand_matrix)
+
+#Set dimension of (4252,28,28)
+dim(hand_matrix) <- c(4252, 28, 28)
+
+#permute hand_matrix
+hand_matrix <- aperm(hand_matrix, c(1,3,2))
+
+#check x
+str(hand_matrix)
+dim(hand_matrix)
+
+#check label
+class(hand_label_a)
+str(hand_label_a)
+dim(hand_label_a)
+
+```
+
+Plot Hand Matrix Data:
+
+```{r Plot hand matrix data}
+#plot hand matrix image
+image_idx = 1
+input_matrix <- hand_matrix[image_idx,1:28,1:28]
+output_matrix <- apply(input_matrix, 2, rev)
+output_matrix <- t(output_matrix)
+image(1:28, 1:28, output_matrix, col=gray.colors(256), xlab=paste('Image for digit of: ', hand_label_a[image_idx]), ylab="")
+
+#plot mnist image
+input_matrix_o <- x_train[image_idx,1:28,1:28]
+output_matrix_o <- apply(input_matrix_o, 2, rev)
+output_matrix_o <- t(output_matrix_o)
+image(1:28, 1:28, output_matrix_o, col=gray.colors(256), xlab=paste('Image for digit of: ', y_train[image_idx]), ylab="")
+```
+
+Perform Pre-modeling Processing:
+
+```{r Pre-Modeling Processing}
+#Process the image to make it binary(either 0 or 255)
+threshold=90
+x_train_r <- replace(x_train, x_train <= threshold, 0)
+x_train_r <- replace(x_train_r, x_train_r > threshold, 255)
+x_test_r <- replace(x_test, x_test <= threshold, 0)
+x_test_r <- replace(x_test_r, x_test_r > threshold, 255)
+
+#add channels to the dim for x
+x_train_r <- array_reshape(x_train_r, c(nrow(x_train_r), 28, 28, 1))
+x_test_r <- array_reshape(x_test_r, c(nrow(x_test_r), 28, 28, 1))
+hand_matrix <- array_reshape(hand_matrix, c(nrow(hand_matrix), 28, 28, 1))
+input_shape <- c(28, 28, 1)
+
+#normalization x
+x_train <- x_train_r / 255
+x_test <- x_test_r / 255
+hand_matrix <- hand_matrix/255
+
+# Convert y to categorical variable
+y_train <- to_categorical(y_train, 10)
+y_test <- to_categorical(y_test, 10)
+hand_label_a <- to_categorical(hand_label_a, 10)
+
+```
+
+### Part 1.2: Train and Validate your Model
+
+#### Model 1:
+
+With 2 Conv layers (32 filters, 48 filters) + max_pooling (2x2) + 2 fully connected layers.
+
+Define Model:
+
+```{r Model Building - Model 1}
+tensorflow::tf$random$set_seed(100)
+
+# Define a few parameters to be used in the CNN model
+batch <- 256
+epochs <- 12
+input_shape <- c(28,28,1)
+
+# define model structure 
+model1 <- keras_model_sequential() %>%
+  layer_conv_2d(filters = 32, kernel_size = c(3,3), activation = 'relu', input_shape = input_shape) %>% 
+  layer_max_pooling_2d(pool_size = c(2, 2)) %>% 
+  layer_conv_2d(filters = 48, kernel_size = c(3,3), activation = 'relu') %>% 
+  layer_max_pooling_2d(pool_size = c(2, 2)) %>% 
+  layer_dropout(rate = 0.27) %>% 
+  layer_flatten() %>% 
+  layer_dense(units = 600, activation = 'relu') %>% 
+  layer_dense(units = 10, activation = 'softmax')
+
+summary(model1)
+```
+
+Compile and Train:
+
+```{r Compile and Train - Model 1}
+# Compile model
+model1 %>% compile(
+  loss = loss_categorical_crossentropy,
+  optimizer = optimizer_adadelta(),
+  metrics = c('accuracy')
+)
+
+#Train and save epochs
+cnn_epoch <- model1 %>% fit(
+  x_train, y_train,
+  batch_size = batch,
+  epochs = epochs,
+  validation_split = 0.3
+)
+```
+
+Evaluate on Test:
+
+```{r Evaluate Tests Dataset - Model 1}
+#Print out results
+scores<-model1 %>% keras::evaluate(x_test, y_test)
+cat('Test loss:', scores[[1]], '\n')
+cat('Test accuracy:', scores[[2]], '\n')
+```
+
+Test accuracy for model 1 is 0.9902.
+
+#### Model 2:
+
+With 3 Conv layers (32 filters) + max_pooling (3x3) + 2 fully connected layers(32 neurons).
+
+```{r Model Building - Model 2}
+batch <- 256
+num_classes <- 10
+epochs <- 10
+tensorflow::tf$random$set_seed(100)
+
+model2 <- keras_model_sequential(name = "CNN_Model") %>% 
+  
+  layer_conv_2d(filters = 32, #layer 1
+                kernel_size = c(4,4), 
+                padding = "same", activation = "relu",
+                input_shape = c(28, 28, 1)
+                ) %>% 
+  layer_max_pooling_2d(pool_size = c(3,3)) %>% 
+  
+  layer_conv_2d(filters = 32, #layer 2
+                kernel_size = c(4,4), 
+                padding = "same", activation = "relu",
+                input_shape = c(28, 28, 1)
+                ) %>% 
+  layer_max_pooling_2d(pool_size = c(3,3)) %>% 
+  
+  layer_conv_2d(filters = 32, #layer 3
+                kernel_size = c(4,4), 
+                padding = "same", activation = "relu",
+                input_shape = c(28, 28, 1)
+                ) %>% 
+  layer_max_pooling_2d(pool_size = c(3,3)) %>% 
+  
+  layer_flatten() %>% 
+  
+  layer_dense(units = 32, #fully-connected
+              activation = "relu") %>% 
+ 
+  layer_dense(units = 10, 
+              activation = "softmax",
+              name = "Output"
+              )
+
+model2
+```
+
+Compile and Train:
+
+```{r Compile and Train - Model 2}
+# Compile model
+model2 %>% compile(
+  loss = loss_categorical_crossentropy,
+  optimizer = optimizer_adadelta(),
+  metrics = c('accuracy')
+)
+
+# Train model
+model2 %>% fit(
+  x_train, y_train,
+  batch_size = batch,
+  epochs = epochs,
+  validation_split = 0.3
+)
+```
+
+Evaluate on Test:
+
+```{r Evaluate Tests Dataset - Model 2}
+#Print out results
+scores2 <- model2 %>% keras::evaluate(
+  x_test, y_test, verbose = 2
+)
+cat('Test loss:', scores2[[1]], '\n')
+cat('Test accuracy:', scores2[[2]], '\n')
+```
+
+Test accuracy for model 2 is 0.987.
+
+### Part 1.3: Test your Model's Performance
+
+Run your model's test against the class's collected Handwritten Digit Data Set, and print these two artifacts:
+
+1.  Accuracy as a percentage (e.g. 50%)
+2.  Confusion Matrix of Predicted Labels vs True Labels for the test
+
+#### Model1's accuracy:
+
+```{r Model Testing - Model 1}
+scores_t <- model1 %>% keras::evaluate(hand_matrix, hand_label_a, verbose = 2)
+
+#print output
+cat('Model1 - Test loss on class hand-written data:', scores_t[[1]], '\n')
+cat('Model1 - Test accuracy on class hand-written data:', round(scores_t[[2]]*100, 4),'%', '\n')
+
+```
+
+```{r Confusion Matrix - Model 1}
+#get predictions for model1
+library(ramify)
+library(caret)
+pred1 <- model1 %>% 
+  predict(hand_matrix)
+pred1_class <- argmax(pred1) -1
+
+#Creating confusion matrix
+cf1 <- caret::confusionMatrix(data=as.factor(pred1_class), reference = as.factor(hand_label))
+print(cf1)
+```
+
+#### Model2's accuracy:
+
+```{r Model Testing - Model 2}
+scores2_t <- model2 %>% keras::evaluate(hand_matrix, hand_label_a, verbose = 2)
+
+#print output
+cat('Model2 - Test loss on class hand-written data:', scores2_t[[1]], '\n')
+cat('Model2 - Test accuracy on class hand-written data:', round(scores2_t[[2]]*100,4),'%', '\n')
+```
+
+```{r Confusion Matrix - Model 2}
+#generate categorical predictions for model2
+pred2 <- model2 %>% 
+              predict(hand_matrix)
+pred2_class <- argmax(pred2) -1
+
+#Creating confusion matrix
+cf2 <- confusionMatrix(data=as.factor(pred2_class), reference = as.factor(hand_label))
+print(cf2)
+```
+
+### Part 1.4: Save your Model Object for Submission
+
+```{r Model Saving}
+#saveRDS(model1, "/Users/shayshay/Desktop/ml final/mc4564_model1.RDS")
+#saveRDS(model2, "/Users/shayshay/Desktop/ml final/mc4564_model2.RDS")
+```
+
+## Part 2: Introspection
+
+Briefly reply (4-6 sentences) to each of the below prompts in your own words.
+
+### Part 2.1: What is Max Pooling? How else might Pooling be performed? What does pooling do to an image? What does the stride length represent?
+
+Max pooling is a pooling operation that help to extract low level features and to down-sample an input representation (image, hidden-layer output matrix, etc. It is added after a convolution layer, which decreases the dimensionality of images by reducing the number of pixels in the output from previous convolution layer. In my model, I use a 2x2 max pooling, which search for the maximum value in a 2x2 region of the convolution layer's output. By using pooling, we can reduce the resolution of the given output of a convolution layer, the network will look at the larger areas of image at a time, which reduces the amount of parameters in the network, and consequently reduces computational load. Besides, it can also help to reduce over-fitting. Stride is the number of pixels shifts over the input matrix. When the stride is 1 then we move the filters to 1 pixel at a time.
+
+### Part 2.2: How does convolution work? What do the terms filter and kernel size represent?
+
+Convolution neural network has convolutional layers that receives input, transform it and output the input to the next layer. Filters in a convolutional layers are able to detect patterns in images. The pattern in an image can be edges, shapes, circles and etc. A filter is a relatively small matrix, which I used 4x4 matrix in my model. The values within the matrix can also be determined based on the type of feature one want to detect. The more filter, the more features can be detected. I use 32 filters in my first model 2D conv layer, so that every image input will generate 32 channel output. By use two fully-connected networks in the end, it can generate predictions of numbers based on the features detected by the convolution layers. The kernel size is the size of filters (width x height). Mostly, kernel are squares, I use 3x3 filters for my model.
+
+### Part 2.3: Briefly explain the choices you made in architecting your network in part 1. What types of layers, and how many of each did you use and why?
+
+For model 1, I designed two conv layer. The first layer has 32 filters with kernel size of 3x3. The second Conv layer has 48 filters with kernel size of 3x3. Because I expect first conv layer to captures simple patterns like edges, corners, then subsequent layers combine those patterns to make more complex patterns (combining edges to make squares and circles). So when move forward in deeper layer, there are larger combinations of patterns to capture. So I increase the filter size in the second layers to capture more combinations. Every conv layer is followed by the ReLU activation function, which serves as a trigger for controlling neurons to fire information. After the activation function, I also use a layer of max_pooling to reduce the dimension and extract only salient features. Moreover, I added 0.27 dropout to the network, to prevent from over-fitting. Lastly, I use two fully connected layers (the first has 600 neurons, the second has 10 for the purpose of classification purpose.) For model 2,the design is similar, except that I use three conv layers, each has 32 filters with 4x4 kernels and activation function of ReLU. I also did the max_pooling (3x3) after each conv output. Again, model 2 also has 2 fully connected layers with 32 neurons in the first and 10 neurons in the second layer, so that it can classify 10 digits.
+
+### Part 2.4: What is an activation layer and why are activation layers necessary? Briefly explain how ReLU activation and Sigmoid activation differ.
+
+Activation layers serve as triggers of output which can help to decide if the neuron would fire or not. Activation functions are also necessary to prevent linearity. If not using, data would pass through the convolution layers of the network only going through linear functions. There are two types of activation functions, linear and non-linear functions. The sigmoid function is non-linear and it looks like a S-shape and it maps the resulting values in between 0 to 1 or -1 to 1. So, we can use a sigmoid function to convert a real value into one that can be interpreted as a probability. ReLU(Rectified Linear Unit) is also a non-linear function, it is half rectified and ranges from 0 to infinity. It can be written as
+
+    f(x) = max{0, z}
+    if input > 0:
+        return input
+    else:
+        return 0
+
+ReLu is faster to compute than the sigmoid function, and its derivative is faster to compute. Moreover,it can also be used to avoid vanishing gradient problem, so it is widely used in neural networks. Instead of sigmoid, I use softmax function in the last fully connected layer, because it is a more generalized logistic activation function which can be used for multiclass classification.
+
+But the issue is that all the negative values become zero immediately which decreases the ability of the model to fit or train from the data properly. That means any negative input given to the ReLU activation function turns the value into zero immediately in the graph, which in turns affects the resulting graph by not mapping the negative values appropriately.
+
+### Part 2.5: Why might a neural network with convolution and/or other elements be a more accurate predictor for labeling image data than a classical algorithm, such as multi-class Logistic Regression, an SVM or a Decision Tree?
+
+When it comes to the application of image recognition, CNN has a high performance. It has a built-in convolution in the hidden layer which help to reduces the high dimensionality of images without losing its information. When the images have large resolutions or three RGB channels, it can deal with large parameters using pooling operations. Most importantly, it detects features without any human supervision. CNN effectively uses adjacent pixel information to effectively downsample the image first by convolution and then uses a prediction layer at the end. Before CNN, we need to spend time on feature selection (or features extraction). When comparing handcrafted features with CNN, CNN performance well and gives better accuracy.
